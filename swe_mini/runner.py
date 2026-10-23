@@ -34,10 +34,60 @@ def prepare_repo(repo, base_commit, workdir=None, depth=50):
     return dest
 
 
+
+import re as _re
+
+_HUNK = _re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
+
+def repair_hunks(patch):
+    """Recompute hunk line counts when a model writes them inconsistently."""
+    lines = patch.splitlines()
+    out, i = [], 0
+    while i < len(lines):
+        m = _HUNK.match(lines[i])
+        if not m:
+            out.append(lines[i]); i += 1; continue
+        start_old, _, start_new, _, tail = m.groups()
+        body, j = [], i + 1
+        while j < len(lines) and not _HUNK.match(lines[j]) and not lines[j].startswith("diff --git "):
+            body.append(lines[j]); j += 1
+        old = sum(1 for l in body if (l.startswith(" ") or l.startswith("-")) and not l.startswith("---"))
+        new = sum(1 for l in body if (l.startswith(" ") or l.startswith("+")) and not l.startswith("+++"))
+        out.append(f"@@ -{start_old},{old} +{start_new},{new} @@{tail}")
+        out.extend(body)
+        i = j
+    return "\n".join(out) + "\n"
+
+
+def normalize_diff(patch):
+    """Repair hunk counts and add `diff --git` headers when they are missing."""
+    patch = repair_hunks(patch)
+    lines = patch.splitlines()
+    out, i = [], 0
+    has_header = False
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git "):
+            has_header = True
+            out.append(line)
+            i += 1
+            continue
+        if line.startswith("--- a/") and i + 1 < len(lines) and lines[i + 1].startswith("+++ b/"):
+            if not has_header:
+                path = line[6:].strip()
+                out.append(f"diff --git a/{path} b/{path}")
+            has_header = False
+        out.append(line)
+        i += 1
+    return "\n".join(out) + "\n"
+
+
 def apply_patch(repo_dir, patch, check_only=False):
+    patch = normalize_diff(patch)
     if check_only:
         return _run(["git", "-C", repo_dir, "apply", "--check", "-"], timeout=120).returncode == 0
-    with tempfile.NamedTemporaryFile("w", suffix=".diff", delete=False, encoding="utf-8") as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".diff", delete=False, encoding="utf-8", newline="\n") as f:
         f.write(patch)
         path = f.name
     try:

@@ -36,6 +36,8 @@ def parse_diff(patch):
             m = re.match(r"diff --git a/(\S+) b/(\S+)", line)
             if m:
                 info.files.append(m.group(2))
+        elif line.startswith("+++ b/") and (not info.files or info.files[-1] != line[6:].strip()):
+            info.files.append(line[6:].strip())
         elif line.startswith("@@"):
             info.hunks += 1
         elif line.startswith("+") and not line.startswith("+++"):
