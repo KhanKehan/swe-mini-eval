@@ -91,3 +91,30 @@ environment for the repos). The single-shot baseline is a floor, not a competiti
 
 Execution mode (apply + FAIL_TO_PASS) is not run yet; the static acceptance is an upper
 bound on what the same patches could resolve.
+
+## Tool-using loop (added 2026-10-23)
+
+`swe_mini/tools.py` binds a workspace to file tools (list / read / search / write /
+run_tests) with path-escape and shell-injection guards. `swe_mini/agent_loop.py` runs a
+ReAct-style loop: the model emits one JSON tool call per turn, observations are appended,
+and the final patch is taken from `submit` or — when the agent edits files directly —
+from `git diff` of the workspace.
+
+Demo (synthetic repo with a one-line bug):
+
+```bash
+python examples/run_demo.py --mock                     # scripted, no API -> resolved: True
+SILICONFLOW_API_KEY=... python examples/run_demo.py    # model-driven
+```
+
+The demo applies the agent's patch to a **fresh copy** of the base repo and runs pytest,
+so the result does not depend on the agent's workspace state.
+
+Findings from building this:
+
+- model-authored diffs often have wrong hunk counts or drifted context; `normalize_diff`
+  repairs hunk counts and adds missing `diff --git` headers, and `git diff` of the agent's
+  edits is preferred when available;
+- writing the patch to a temp file on Windows silently converts LF to CRLF, which makes
+  `git apply` fail with "patch does not apply"; the temp file is now opened with
+  `newline="\n"`.
